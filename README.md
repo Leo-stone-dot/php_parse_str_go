@@ -27,7 +27,10 @@
 
 ## 安装与使用
 
-不依赖任何第三方库，直接拷贝目录即可。模块名：`php_parse_str_go`。
+```shell
+go get github.com/Leo-stone-dot/php_parse_str_go
+```
+
 
 示例：
 
