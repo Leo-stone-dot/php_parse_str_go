@@ -1,5 +1,10 @@
 # php_parse_str_go
 
+### 生成说明（Provenance）
+- 本仓库代码由 ByteDance DevInfra 的 DevAgent/AIME 生成
+- 生成日期：2025-09-30
+- 当前维护者：zhaixiaolei.leo
+
 一个纯标准库实现的 Go 包，尽可能贴近 PHP `parse_str` 的语义：
 - 输入为原始查询串（支持以 `?` 开头）
 - 参数分隔符支持 `&` 和 `;`（对齐 PHP 默认 `arg_separator.input` 行为）
