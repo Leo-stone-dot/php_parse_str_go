@@ -28,7 +28,7 @@
 ## 安装与使用
 
 ```shell
-go get github.com/Leo-stone-dot/php_parse_str_go
+go get github.com/leo-stone-dot/php_parse_str_go
 ```
 
 
@@ -39,7 +39,7 @@ package main
 
 import (
     "fmt"
-    parsephp "php_parse_str_go/parsephp"
+    parsephp "github.com/leo-stone-dot/php_parse_str_go/parsephp"
 )
 
 func main() {
