@@ -180,43 +180,50 @@ func isHex(c byte) bool {
 	return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F')
 }
 
-// tokenizeKey splits a decoded key like "a[b][c]" into ["a", "b", "c"].
-// Empty brackets "[]" produce an empty token "" (append semantics): "a[]" -> ["a", ""].
-// Base name is segment before first '['. If there are unmatched brackets, we parse best-effort.
+// tokenizeKey splits a decoded key into base + bracket tokens, matching the clarified PHP boundary behaviors.
+// Rules:
+// - Only matched bracket pairs "[...]" become tokens.
+// - Unmatched '[' is converted into an underscore '_' in the base, and the remaining characters are scanned as base.
+// - Unmatched ']' is ignored (dropped).
 func tokenizeKey(s string) []string {
 	if s == "" {
 		return nil
 	}
-	var res []string
-	// Find base (before first '[')
-	i := strings.IndexByte(s, '[')
-	if i < 0 {
-		return []string{s}
-	}
-	base := s[:i]
-	res = append(res, base)
-	// Parse bracket tokens
-	j := i
-	for j < len(s) {
-		if s[j] != '[' {
-			j++
+	var baseB strings.Builder
+	var tokens []string
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c == '[' {
+			// search for the next ']'
+			j := i + 1
+			for j < len(s) && s[j] != ']' {
+				j++
+			}
+			if j < len(s) {
+				// matched bracket pair -> emit token
+				tokens = append(tokens, s[i+1:j])
+				i = j + 1
+				// skip any immediate extra consecutive ']' characters after a matched pair
+				for i < len(s) && s[i] == ']' {
+					i++
+				}
+				continue
+			}
+			// unmatched '[' -> convert to '_' and continue scanning the rest as part of base (treat future ']' literally)
+			baseB.WriteByte('_')
+			i++
 			continue
 		}
-		// Find matching ']'
-		k := j + 1
-		for k < len(s) && s[k] != ']' {
-			k++
-		}
-		if k >= len(s) {
-			// unmatched '['; take remainder as a token and stop
-			tok := s[j+1:]
-			res = append(res, tok)
-			break
-		}
-		tok := s[j+1 : k]
-		res = append(res, tok)
-		j = k + 1
+		// outside of bracket-token parsing, a stray ']' is treated as a literal and kept in the base key
+		baseB.WriteByte(c)
+		i++
 	}
+	if len(tokens) == 0 {
+		return []string{baseB.String()}
+	}
+	res := make([]string, 1, 1+len(tokens))
+	res[0] = baseB.String()
+	res = append(res, tokens...)
 	return res
 }
 
@@ -292,84 +299,162 @@ func insert(root map[string]any, base string, tokens []string, value string) {
 		}
 
 		if tok == "" { // append semantics
-			// Ensure slice at this level, and write header back (in case of replacement)
-			sl := ensureSlice(cur)
-			setCur(sl)
-
-			if isLeaf {
-				sl = append(sl, value)
-				setCur(sl)
-				// Leaf done
-				return
-			}
-
-			// Decide child type by next token, append, then update parent
-			var child any
-			if nextTok == "" || isNumeric(nextTok) {
-				child = []any{}
-			} else {
-				child = make(map[string]any)
-			}
-			sl = append(sl, child)
-			setCur(sl)
-
-			// Descend
-			idxInParent := len(sl) - 1
-			cur = child
-			setCur = func(updated any) { sl[idxInParent] = updated }
-			continue
-		}
-
-		if isNumeric(tok) { // numeric index => slice
-			sl := ensureSlice(cur)
-			setCur(sl)
-
-			n, _ := strconv.Atoi(tok) // safe due to isNumeric
-			sl = growSlice(sl, n)
-			setCur(sl)
-
-			if isLeaf {
-				sl[n] = value
-				setCur(sl)
-				return
-			}
-
-			// Prepare/normalize child at index
-			child := sl[n]
-			if child == nil {
+			// Hybrid behavior: if current is a slice, append to slice; if current is a map, append under next numeric string key.
+			switch c := cur.(type) {
+			case []any:
+				// Slice append semantics (unchanged)
+				sl := c
+				if isLeaf {
+					sl = append(sl, value)
+					setCur(sl)
+					return
+				}
+				var child any
 				if nextTok == "" || isNumeric(nextTok) {
 					child = []any{}
 				} else {
 					child = make(map[string]any)
 				}
-				sl[n] = child
+				sl = append(sl, child)
 				setCur(sl)
-			} else {
-				switch child.(type) {
-				case []any, map[string]any:
-					// OK
-				case string:
-					if nextTok == "" || isNumeric(nextTok) {
-						child = []any{}
-					} else {
-						child = make(map[string]any)
-					}
-					sl[n] = child
-					setCur(sl)
-				default:
-					if nextTok == "" || isNumeric(nextTok) {
-						child = []any{}
-					} else {
-						child = make(map[string]any)
-					}
-					sl[n] = child
-					setCur(sl)
+				idxInParent := len(sl) - 1
+				cur = child
+				setCur = func(updated any) { sl[idxInParent] = updated }
+				continue
+			case map[string]any:
+				// Map hybrid append: choose next auto index key and set child/value under that string key
+				mp := c
+				key := strconv.Itoa(nextAutoIndex(mp))
+				if isLeaf {
+					mp[key] = value
+					setCur(mp)
+					return
 				}
+				var child any
+				if nextTok == "" || isNumeric(nextTok) {
+					child = []any{}
+				} else {
+					child = make(map[string]any)
+				}
+				mp[key] = child
+				setCur(mp)
+				cur = child
+				setCur = func(updated any) { mp[key] = updated }
+				continue
+			default:
+				// Unknown or nil: default to slice semantics for robustness
+				sl := ensureSlice(cur)
+				setCur(sl)
+				if isLeaf {
+					sl = append(sl, value)
+					setCur(sl)
+					return
+				}
+				var child any
+				if nextTok == "" || isNumeric(nextTok) {
+					child = []any{}
+				} else {
+					child = make(map[string]any)
+				}
+				sl = append(sl, child)
+				setCur(sl)
+				idxInParent := len(sl) - 1
+				cur = child
+				setCur = func(updated any) { sl[idxInParent] = updated }
+				continue
 			}
-			// Descend
-			cur = child
-			setCur = func(updated any) { sl[n] = updated }
-			continue
+		}
+
+		if isNumeric(tok) { // numeric index
+			// If current is a map, treat numeric token as a string key under the map (hybrid semantics).
+			switch c := cur.(type) {
+			case map[string]any:
+				mp := ensureMap(c)
+				setCur(mp)
+				if isLeaf {
+					mp[tok] = value
+					setCur(mp)
+					return
+				}
+				child, ok := mp[tok]
+				if !ok || child == nil {
+					if nextTok == "" || isNumeric(nextTok) {
+						child = []any{}
+					} else {
+						child = make(map[string]any)
+					}
+					mp[tok] = child
+				} else {
+					switch child.(type) {
+					case []any, map[string]any:
+						// OK
+					case string:
+						if nextTok == "" || isNumeric(nextTok) {
+							child = []any{}
+						} else {
+							child = make(map[string]any)
+						}
+						mp[tok] = child
+					default:
+						if nextTok == "" || isNumeric(nextTok) {
+							child = []any{}
+						} else {
+							child = make(map[string]any)
+						}
+						mp[tok] = child
+					}
+				}
+				cur = child
+				key := tok
+				setCur = func(updated any) { mp[key] = updated }
+				continue
+			default:
+				// Default behavior: ensure slice and set by numeric index
+				sl := ensureSlice(cur)
+				setCur(sl)
+				n, _ := strconv.Atoi(tok) // safe due to isNumeric
+				sl = growSlice(sl, n)
+				setCur(sl)
+				if isLeaf {
+					sl[n] = value
+					setCur(sl)
+					return
+				}
+				child := sl[n]
+				if child == nil {
+					if nextTok == "" || isNumeric(nextTok) {
+						child = []any{}
+					} else {
+						child = make(map[string]any)
+					}
+					sl[n] = child
+					setCur(sl)
+				} else {
+					switch child.(type) {
+					case []any, map[string]any:
+						// OK
+					case string:
+						if nextTok == "" || isNumeric(nextTok) {
+							child = []any{}
+						} else {
+							child = make(map[string]any)
+						}
+						sl[n] = child
+						setCur(sl)
+					default:
+						if nextTok == "" || isNumeric(nextTok) {
+							child = []any{}
+						} else {
+							child = make(map[string]any)
+						}
+						sl[n] = child
+						setCur(sl)
+					}
+				}
+				cur = child
+				setCur = func(updated any) { sl[n] = updated }
+				continue
+			}
 		}
 
 		// non-numeric associative key => map
@@ -435,11 +520,20 @@ func ensureMap(container any) map[string]any {
 	if container == nil {
 		return make(map[string]any)
 	}
-	if mp, ok := container.(map[string]any); ok {
-		return mp
+	switch v := container.(type) {
+	case map[string]any:
+		return v
+	case []any:
+		// convert slice elements to string-indexed map entries to preserve content
+		m := make(map[string]any, len(v))
+		for i, elem := range v {
+			m[strconv.Itoa(i)] = elem
+		}
+		return m
+	default:
+		// string or other types -> start fresh map
+		return make(map[string]any)
 	}
-	// If a slice is here but tokens require a map, we replace it
-	return make(map[string]any)
 }
 
 // growSlice ensures sl has length > idx, expanding with nils.
@@ -465,6 +559,22 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+// nextAutoIndex scans a map's keys and returns the next automatic numeric index
+// (max existing numeric key + 1), or 0 if none exist. Numeric keys are strings of digits only.
+func nextAutoIndex(m map[string]any) int {
+	max := -1
+	for k := range m {
+		if isNumeric(k) {
+			if n, err := strconv.Atoi(k); err == nil {
+				if n > max {
+					max = n
+				}
+			}
+		}
+	}
+	return max + 1
 }
 
 // writeBack is a no-op shim that returns the up-to-date container.

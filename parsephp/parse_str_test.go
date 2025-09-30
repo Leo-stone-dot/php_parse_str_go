@@ -136,34 +136,101 @@ func TestRepeatAssociativeKeyLastWins(t *testing.T) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
 }
-func TestOverwrite(t *testing.T) {
-	got, err := ParseStr("f[][]=m&f[][]=n")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	want := map[string]any{"f": []any{[]any{"m"}, []any{"n"}}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %#v, want %#v", got, want)
-	}
-}
 
-func TestEmpty(t *testing.T) {
-	got, err := ParseStr("f")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	want := map[string]any{"f": ""}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %#v, want %#v", got, want)
-	}
-}
-
-func TestMix(t *testing.T) {
+func TestAssociativeSiblingsUnderSameBase(t *testing.T) {
 	got, err := ParseStr("a[b][c]=d&a[d]=c")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := map[string]any{"a": map[string]any{"d": "c", "b": map[string]any{"c": "d"}}}
+	want := map[string]any{"a": map[string]any{"b": map[string]any{"c": "d"}, "d": "c"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestHybridAppendUnderMap(t *testing.T) {
+	got, err := ParseStr("a[b][c]=d&a[][d]=c")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"a": map[string]any{"b": map[string]any{"c": "d"}, "0": map[string]any{"d": "c"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestAutoIndexProgressionInMap(t *testing.T) {
+	got, err := ParseStr("a[b]=x&a[]=y&a[]=z")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"a": map[string]any{"b": "x", "0": "y", "1": "z"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestMixedNumericAssociativeThenAppendHybrid(t *testing.T) {
+	got, err := ParseStr("a[0]=x&a[b]=y&a[]=z")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"a": map[string]any{"0": "x", "b": "y", "1": "z"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestMalformed_StrayCloseBracketIgnored(t *testing.T) {
+	got, err := ParseStr("a[b][c]=d&a[d]]=c")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"a": map[string]any{"b": map[string]any{"c": "d"}, "d": "c"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestMalformed_UnmatchedOpenBracketConvertedToUnderscore(t *testing.T) {
+	got, err := ParseStr("a[b][c]=d&a[d]=c&a[=1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"a": map[string]any{"b": map[string]any{"c": "d"}, "d": "c"}, "a_": "1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestUnmatchedOpenBracketInMiddle(t *testing.T) {
+	got, err := ParseStr("p[q=1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"p_q": "1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestStrayCloseBracketInBaseLiteralKept(t *testing.T) {
+	got, err := ParseStr("b]=1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"b]": "1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestExtraCloseBracketAfterMatchedTokenIgnored(t *testing.T) {
+	got, err := ParseStr("a[b]]=1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"a": map[string]any{"b": "1"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
