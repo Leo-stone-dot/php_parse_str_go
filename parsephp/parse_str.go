@@ -41,35 +41,44 @@ func ParseStrWithOptions(query string, opts Options) (map[string]any, error) {
 		// Split once on first '='; key without '=' => empty value
 		k, v, hasEq := splitPair(raw)
 
-		// Decode key/value
-		dk, errK := decode(k, opts.StrictDecode)
+		// Decode value (keys are tokenized first to avoid encoded brackets becoming structural)
 		dv, errV := decode(v, opts.StrictDecode)
-		// Lenient policy: if strict=false, decode returns no error and keeps invalid sequences
 		if opts.StrictDecode {
-			// If strict, any error bubbles up
-			if errK != nil {
-				return nil, fmt.Errorf("decode key error: %w", errK)
-			}
 			if errV != nil {
 				return nil, fmt.Errorf("decode value error: %w", errV)
 			}
 		}
-		dk = strings.TrimSpace(dk)
 		dv = strings.TrimSpace(dv)
 
-		if dk == "" {
+		// Tokenize raw key into base + bracket tokens (before decoding)
+		rawSeq := tokenizeKey(k)
+		if len(rawSeq) == 0 {
+			continue
+		}
+		// Decode base and tokens individually
+		baseRaw := strings.TrimSpace(rawSeq[0])
+		base, errK := decode(baseRaw, opts.StrictDecode)
+		if opts.StrictDecode && errK != nil {
+			return nil, fmt.Errorf("decode key error: %w", errK)
+		}
+		base = strings.TrimSpace(base)
+		var tokens []string
+		if len(rawSeq) > 1 {
+			tokens = make([]string, 0, len(rawSeq)-1)
+			for _, rt := range rawSeq[1:] {
+				dt, errT := decode(rt, opts.StrictDecode)
+				if opts.StrictDecode && errT != nil {
+					return nil, fmt.Errorf("decode key token error: %w", errT)
+				}
+				dt = strings.TrimSpace(dt)
+				tokens = append(tokens, dt)
+			}
+		}
+
+		if base == "" {
 			// ignore empty keys (robustness; PHP would create a variable with empty name, which is awkward in Go)
 			continue
 		}
-
-		// Tokenize decoded key into base + bracket tokens
-		seq := tokenizeKey(dk)
-		if len(seq) == 0 {
-			// Shouldn't happen; but guard anyway
-			continue
-		}
-		base := seq[0]
-		tokens := seq[1:]
 
 		// Insert according to tokens
 		if len(tokens) == 0 {

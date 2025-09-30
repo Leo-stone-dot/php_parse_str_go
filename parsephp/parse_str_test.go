@@ -203,6 +203,17 @@ func TestMalformed_UnmatchedOpenBracketConvertedToUnderscore(t *testing.T) {
 	}
 }
 
+func TestStrayCloseBracketAtStart(t *testing.T) {
+	got, err := ParseStr("x]=1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"x]": "1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
 func TestUnmatchedOpenBracketInMiddle(t *testing.T) {
 	got, err := ParseStr("p[q=1")
 	if err != nil {
